@@ -108,6 +108,16 @@
       value: value
     });
   }
+  function proxy(vm, source, key) {
+    Object.defineProperty(vm, source, {
+      get: function get() {
+        return vm[source][key];
+      },
+      set: function set(newValue) {
+        vm[source][key] = newValue;
+      }
+    });
+  }
 
   //首先明确需要重写的都有哪些数组的方法，push,pop,shift,unshift,sort,reverse,splice，这些都是会导致数组本身发生变化的方法
   //slice不会改变数组本身，这样的方法不需要去劫持
@@ -274,6 +284,15 @@
     //对象劫持，用户改变了数据，我希望能够得到通知-->刷新页面
     //MVVM模式，数据变化可以驱动视图变化
     //Object.defineProperty() 给属性增加get和set方法
+
+    /*
+    * 在这里，希望用户在取data上的值时不用vm._data.name，而是可以直接通过vm.name来取值
+    * 可以通过Object.defineProperty来设置一层代理
+    * */
+
+    for (var key in data) {
+      proxy(vm, '_data', key);
+    }
 
     observe(data); //vue的核心响应式原理
   }
@@ -581,8 +600,54 @@
   //     ]
   // };
 
+  var Watcher = /*#__PURE__*/function () {
+    function Watcher(vm, exprOrFn, callback, options) {
+      _classCallCheck(this, Watcher);
+
+      //写一个类的第一件事，把所有属性放在实例上
+      this.vm = vm;
+      this.callback = callback;
+      this.options = options;
+      this.getter = exprOrFn;
+      this.get(); //watcher只做了一件事，让传进来的exprOrFn执行
+    }
+
+    _createClass(Watcher, [{
+      key: "get",
+      value: function get() {
+        this.getter();
+      }
+    }]);
+
+    return Watcher;
+  }();
+
+  function lifecycleMixin(Vue) {
+    //vnode是传进来的虚拟节点，需要在这里变成真实节点，更新页面
+    Vue.prototype._update = function (vnode) {// console.log(vnode,'vnode');
+    };
+  }
+  function mountComponent(vm, el) {
+    var options = vm.$options; //后面需要拿到render方法
+
+    vm.$el = el; //接下来渲染页面
+
+    var updateComponent = function updateComponent() {
+      //无论是渲染还是更新，都需要调这个方法
+      //调_render这个方法(专门用来渲染虚拟dom的方法)，里面解析刚才的render方法，返回一个虚拟dom，再_update生成真实dom
+      vm._update(vm._render());
+    }; // 调updateComponent方法，会先执行_render ,再执行_update，从里到外执行
+    //vue核心概念，渲染watcher，每个组件都有一个watcher
+    //true表示是一个渲染watcher，回调是vm.$watcher里面的回调，用的少
+    //watcher观察数据的变化，数据变化，视图更新
+    //每次数据变化，调watcher，watcher调里面的updateComponent,updateComponent调vm上的_render,_render调原型上的render方法，转成虚拟节点，然后通过_update转成真是dom
+
+
+    new Watcher(vm, updateComponent, function () {}, true);
+  }
+
   //通过引入文件的方式，给vue原型上添加方法
-  function initMixMin(Vue) {
+  function initMixin(Vue) {
     //初始化流程
     Vue.prototype._init = function (options) {
       //首先需要做的就是数据的劫持
@@ -591,9 +656,7 @@
       vm.$options = options; //初始化状态
 
       initState(vm); //分割状态
-
-      /*
-      * 如果用户传入了el属性，就需要实现挂载功能，将页面渲染出来*/
+      // 如果用户传入了el属性，就需要实现挂载功能，将页面渲染出来*/
 
       if (vm.$options.el) {
         //$mount原型上的方法
@@ -614,7 +677,9 @@
           template = el.outerHTML;
         }
 
-        options.render = compileToFunction(template); //要把template转换为render
+        options.render = compileToFunction(template); //mountComponent挂载方法，通过render更新之前的dom元素
+
+        mountComponent(vm, el); //要把template转换为render
         // <div id="app">
         // <p>{{name}}</p>
         // <span>{{age}}</span>
@@ -628,6 +693,69 @@
     };
   }
 
+  function createElement(tag) {
+    var data = arguments.length > 1 && arguments[1] !== undefined ? arguments[1] : {};
+    var key = data.key;
+
+    if (key) {
+      delete data.key;
+    }
+
+    for (var _len = arguments.length, children = new Array(_len > 2 ? _len - 2 : 0), _key = 2; _key < _len; _key++) {
+      children[_key - 2] = arguments[_key];
+    }
+
+    return vnode(tag, data, key, children, undefined);
+  }
+  function createTextNode(text) {
+    return vnode(undefined, undefined, undefined, undefined, text);
+  }
+
+  function vnode(tag, data, key, children, text) {
+    return {
+      tag: tag,
+      data: data,
+      key: key,
+      children: children,
+      text: text
+    };
+  } //虚拟节点就是通过_c,_v，实现用对象的形式来描述dom的操作(也是个对象)
+  //将template转换成ast语法树-->生成render方法-->生成虚拟dom-->真实dom
+  //当视图更新的时候，重新生成虚拟dom，做对比，更新dom
+  // let xunidom = {
+  //     tag:'div',
+  //     key:undefined,
+  //     data:{},
+  //     children:[],
+  //     text:undefined,
+  // }
+
+  function renderMixin(Vue) {
+    /*
+    * _c创建元素的虚拟节点
+    * _v创建文本的虚拟节点
+    * _s JSON.stringify
+    * */
+    Vue.prototype._c = function () {
+      //arguments包括tag,data和很多children
+      return createElement.apply(void 0, arguments);
+    };
+
+    Vue.prototype._v = function (text) {
+      return createTextNode(text);
+    };
+
+    Vue.prototype._s = function (val) {
+      return val === null ? '' : _typeof(val) === 'object' ? JSON.stringify(val) : val;
+    };
+
+    Vue.prototype._render = function () {
+      var vm = this;
+      var render = vm.$options.render; // let vnode = render.call(vm);//render执行，改变里面的this指向vm，通过with函数让虚拟dom上的属性(如name)能够自动去this(vm)上取值；
+      // return vnode
+    };
+  }
+
   //这里是Vue核心配置,只是vue的一个声明
 
   function Vue(options) {
@@ -636,7 +764,10 @@
   } //在vue原型上扩展方法
 
 
-  initMixMin(Vue); //给vue原型上添加一个_init方法
+  initMixin(Vue); //给vue原型上添加一个_init方法
+
+  renderMixin(Vue);
+  lifecycleMixin(Vue);
 
   return Vue;
 

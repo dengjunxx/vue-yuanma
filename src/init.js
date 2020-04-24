@@ -2,7 +2,9 @@
 import Vue from "./index";
 import {initState} from './state'
 import {compileToFunction} from './compiler/index.js'
-export function initMixMin(Vue) {
+import {mountComponent} from './lifecycle'
+import Watcher from './observer/watcher'
+export function initMixin(Vue) {
     //初始化流程
     Vue.prototype._init = function (options) {
         //首先需要做的就是数据的劫持
@@ -11,8 +13,7 @@ export function initMixMin(Vue) {
          //初始化状态
          initState(vm);//分割状态
 
-        /*
-        * 如果用户传入了el属性，就需要实现挂载功能，将页面渲染出来*/
+        // 如果用户传入了el属性，就需要实现挂载功能，将页面渲染出来*/
         if(vm.$options.el){
             //$mount原型上的方法
             vm.$mount(vm.$options.el)
@@ -30,6 +31,9 @@ export function initMixMin(Vue) {
                 template = el.outerHTML;
             }
             options.render = compileToFunction(template);
+            //mountComponent挂载方法，通过render更新之前的dom元素
+            mountComponent(vm,el);
+
             //要把template转换为render
             // <div id="app">
             // <p>{{name}}</p>
